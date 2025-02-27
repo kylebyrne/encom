@@ -8,8 +8,11 @@ module Encom
 
     class ProtocolVersionError < StandardError; end
     class ConnectionError < StandardError; end
+    class ToolError < StandardError; end
+    class RequestTimeoutError < StandardError; end
 
-    attr_reader :name, :version, :responses, :server_info, :server_capabilities, :initialized, :protocol_version
+    attr_reader :name, :version, :responses, :server_info, :server_capabilities,
+                :initialized, :protocol_version, :tool_responses
 
     def initialize(name:, version:, capabilities:)
       @name = name
@@ -17,6 +20,10 @@ module Encom
       @capabilities = capabilities
       @message_id = 0
       @responses = []
+      @tool_responses = {}
+      @pending_requests = {}
+      @response_mutex = Mutex.new
+      @response_condition = ConditionVariable.new
       @initialized = false
       @closing = false
       @error_handlers = []
@@ -65,17 +72,24 @@ module Encom
 
       @responses << parsed_response
 
-      if parsed_response[:id] && parsed_response[:result]
-        handle_result(parsed_response)
-      elsif parsed_response[:id] && parsed_response[:error]
-        handle_error(parsed_response)
+      if parsed_response[:id]
+        @response_mutex.synchronize do
+          @tool_responses[parsed_response[:id]] = parsed_response
+          @response_condition.broadcast # Signal threads waiting for this response
+        end
+
+        if parsed_response[:result]
+          handle_initialize_result(parsed_response) if @pending_requests[parsed_response[:id]] == 'initialize'
+        elsif parsed_response[:error]
+          handle_error(parsed_response)
+        end
       end
     rescue JSON::ParserError => e
       error_msg = "Error parsing response: #{e.message}, Raw response: #{data.inspect}"
       trigger_error(ConnectionError.new(error_msg))
     end
 
-    def handle_result(response)
+    def handle_initialize_result(response)
       @server_info = response[:result][:serverInfo]
       @server_capabilities = response[:result][:capabilities]
       @protocol_version = response[:result][:protocolVersion]
@@ -116,15 +130,18 @@ module Encom
 
     def request(request_data)
       @message_id += 1
+      id = @message_id
+
+      @pending_requests[id] = request_data[:method]
 
       @transport.send(
         JSON.generate({
           jsonrpc: '2.0',
-          id: @message_id
+          id: id
         }.merge(request_data))
       )
 
-      @message_id
+      id
     end
 
     def notification(notification_data)
@@ -133,6 +150,111 @@ module Encom
           jsonrpc: '2.0'
         }.merge(notification_data))
       )
+    end
+
+    # Wait for a response with a specific ID, with timeout
+    #
+    # @param id [Integer] The ID of the request to wait for
+    # @param timeout [Numeric] The timeout in seconds
+    # @return [Hash] The response
+    # @raise [RequestTimeoutError] If the timeout is reached
+    def wait_for_response(id, timeout = 5)
+      deadline = Time.now + timeout
+
+      @response_mutex.synchronize do
+        @response_condition.wait(@response_mutex, 0.1) while !@tool_responses.key?(id) && Time.now < deadline
+
+        raise RequestTimeoutError, "Timeout waiting for response to request #{id}" unless @tool_responses.key?(id)
+
+        @tool_responses[id]
+      end
+    end
+
+    # List available tools from the server
+    #
+    # @param params [Hash, nil] Optional parameters for the list_tools request
+    # @param timeout [Numeric] The timeout in seconds
+    # @return [Array<Hash>] The list of tools
+    # @raise [RequestTimeoutError] If the timeout is reached
+    # @raise [ConnectionError] If there is an error communicating with the server
+    def list_tools(params = nil, timeout = 5)
+      request_data = {
+        method: 'tools/list'
+      }
+
+      request_data[:params] = params if params
+
+      id = request(request_data)
+
+      # Wait for the response
+      response = wait_for_response(id, timeout)
+
+      if response[:error]
+        error_msg = "Error from server: #{response[:error][:message]} (#{response[:error][:code]})"
+        raise ConnectionError, error_msg
+      end
+
+      # Return the tools array
+      response[:result][:tools]
+    end
+
+    # Call a tool on the server
+    #
+    # @param name [String] The name of the tool to call
+    # @param arguments [Hash] The arguments to pass to the tool
+    # @param timeout [Numeric] The timeout in seconds
+    # @return [Hash] The tool result containing content array
+    # @raise [RequestTimeoutError] If the timeout is reached
+    # @raise [ToolError] If there is an error with the tool execution
+    # @raise [ConnectionError] If there is an error communicating with the server
+    def call_tool(name:, arguments:, timeout: 5)
+      id = request(
+        {
+          method: 'tools/call',
+          params: {
+            name: name,
+            arguments: arguments
+          }
+        }
+      )
+
+      # Wait for the response
+      response = wait_for_response(id, timeout)
+
+      if response[:error]
+        error_msg = "Tool error: #{response[:error][:message]} (#{response[:error][:code]})"
+        raise ToolError, error_msg
+      end
+
+      # Return the result content
+      response[:result]
+    end
+
+    # Get the list of tools from a previous list_tools request
+    #
+    # @param request_id [Integer] The ID of the list_tools request
+    # @return [Array<Hash>, nil] The list of tools or nil if the response isn't available
+    def get_tools(request_id)
+      response = @tool_responses[request_id]
+      return nil unless response && response[:result]
+
+      response[:result][:tools]
+    end
+
+    # Get the result of a tool call
+    #
+    # @param request_id [Integer] The ID of the call_tool request
+    # @return [Hash, nil] The tool result or nil if the response isn't available
+    def get_tool_result(request_id)
+      response = @tool_responses[request_id]
+      return nil unless response
+
+      if response[:error]
+        error_msg = "Tool error: #{response[:error][:message]} (#{response[:error][:code]})"
+        raise ToolError, error_msg
+      end
+
+      response[:result]
     end
 
     def close
