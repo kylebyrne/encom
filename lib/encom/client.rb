@@ -1,3 +1,4 @@
+require "json"
 module Encom
   class Client
     LATEST_PROTOCOL_VERSION = '2024-11-05'

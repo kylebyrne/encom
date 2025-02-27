@@ -1,5 +1,6 @@
-require "open3"
+require 'open3'
 require 'timeout'
+require 'json'
 
 module Encom
   module Transport
@@ -20,6 +21,7 @@ module Encom
           data: []
         }
         @mutex = Mutex.new
+        @json_buffer = '' # Buffer for accumulating JSON messages
       end
 
       # Register event handlers
@@ -38,19 +40,14 @@ module Encom
         self
       end
 
-      # Start the process and set up I/O handling
       def start
-        raise "StdioClientTransport already started!" if @process
+        raise 'StdioClientTransport already started!' if @process
 
-        # Set up default environment or use provided one
-        # env = @server_params[:env] || ENV.to_h
         env = ENV.to_h
 
-        # Prepare command and arguments
         command = @command
         args = @args
 
-        # Start the process with Open3
         @stdin, @stdout, @stderr, @process = Open3.popen3(
           env,
           command,
@@ -60,20 +57,16 @@ module Encom
 
         @process_pid = @process.pid
 
-        # Start background threads to handle IO
         start_stdout_thread
         start_stderr_thread
         start_process_monitor_thread
 
-        # Return self for method chaining
         self
       end
 
-      # Send data to the process
       def send(data)
         return false unless @process && @stdin
 
-        # Add a newline if not already present to ensure proper message framing over stdio
         data = "#{data}\n" unless data.end_with?("\n")
 
         begin
@@ -86,43 +79,59 @@ module Encom
         end
       end
 
-      # Send a line of data (with newline)
       def send_line(data)
         send("#{data}\n")
       end
 
-      # Close the process
       def close
         return unless @process
 
-        # Close stdin to signal we're done writing
-        @stdin.close rescue nil
+        begin
+          @stdin.close
+        rescue StandardError
+          nil
+        end
 
-        # Give the process a chance to exit gracefully
         begin
           Timeout.timeout(2) do
-            Process.wait(@process.pid) rescue nil
+            Process.wait(@process.pid)
+          rescue StandardError
+            nil
           end
         rescue Timeout::Error
-          # If it doesn't exit in time, terminate it
-          Process.kill('TERM', @process.pid) rescue nil
+          begin
+            Process.kill('TERM', @process.pid)
+          rescue StandardError
+            nil
+          end
 
-          # Give it a bit more time
           begin
             Timeout.timeout(1) do
-              Process.wait(@process.pid) rescue nil
+              Process.wait(@process.pid)
+            rescue StandardError
+              nil
             end
           rescue Timeout::Error
-            # If it still doesn't exit, force kill it
-            Process.kill('KILL', @process.pid) rescue nil
+            begin
+              Process.kill('KILL', @process.pid)
+            rescue StandardError
+              nil
+            end
           end
         end
 
         # Clean up resources
-        @stdout.close rescue nil
-        @stderr.close rescue nil
+        begin
+          @stdout.close
+        rescue StandardError
+          nil
+        end
+        begin
+          @stderr.close
+        rescue StandardError
+          nil
+        end
 
-        # Notify of closure
         trigger_close
 
         @process = nil
@@ -132,62 +141,50 @@ module Encom
 
       def start_stdout_thread
         Thread.new do
-          begin
-            # Use read_nonblock for more responsive reading
-            while true
-              begin
-                chunk = @stdout.read_nonblock(1024)
-                if chunk && !chunk.empty?
-                  @mutex.synchronize do
-                    @read_buffer << chunk
-                  end
-                  process_read_buffer
+          while true
+            begin
+              chunk = @stdout.read_nonblock(1024)
+              if chunk && !chunk.empty?
+                @mutex.synchronize do
+                  @read_buffer << chunk
                 end
-              rescue IO::WaitReadable
-                # Nothing to read yet, sleep briefly then try again
-                IO.select([@stdout], nil, nil, 0.1)
-                retry
-              rescue EOFError
-                # End of file reached, normal exit
-                break
+                process_read_buffer
               end
+            rescue IO::WaitReadable
+              IO.select([@stdout], nil, nil, 0.1)
+              retry
+            rescue EOFError
+              break
             end
-          rescue IOError, Errno::EPIPE => e
-            trigger_error(e) unless @process.nil?
-          ensure
-            trigger_close if @process && !@stdout.closed?
           end
+        rescue IOError, Errno::EPIPE => e
+          trigger_error(e) unless @process.nil?
+        ensure
+          trigger_close if @process && !@stdout.closed?
         end
       end
 
       def start_stderr_thread
         Thread.new do
-          begin
-            while line = @stderr.gets
-              trigger_error(RuntimeError.new("Process stderr: #{line.strip}"))
-            end
-          rescue IOError, Errno::EPIPE => e
-            trigger_error(e) unless @process.nil?
+          while line = @stderr.gets
+            trigger_error(RuntimeError.new("Process stderr: #{line.strip}"))
           end
+        rescue IOError, Errno::EPIPE => e
+          trigger_error(e) unless @process.nil?
         end
       end
 
       def start_process_monitor_thread
         Thread.new do
-          begin
-            Process.wait(@process.pid)
-            exit_status = $?.exitstatus
-            trigger_close(exit_status)
-          rescue Errno::ECHILD, Errno::ESRCH => e
-            # Process already gone
-            trigger_close
-          end
+          Process.wait(@process.pid)
+          exit_status = $?.exitstatus
+          trigger_close(exit_status)
+        rescue Errno::ECHILD, Errno::ESRCH
+          trigger_close
         end
       end
 
       def process_read_buffer
-        # This is a simplified version - you might want to implement
-        # more sophisticated buffer processing logic here
         data = nil
 
         @mutex.synchronize do
@@ -195,7 +192,30 @@ module Encom
           @read_buffer.clear
         end
 
-        trigger_data(data) if data && !data.empty?
+        return unless data && !data.empty?
+
+        @json_buffer += data
+
+        process_json_messages
+      end
+
+      def process_json_messages
+        while @json_buffer.include?("\n")
+          message, remainder = @json_buffer.split("\n", 2)
+
+          if message && !message.empty?
+            begin
+              JSON.parse(message)
+
+              trigger_data(message)
+            rescue JSON::ParserError
+              @json_buffer = message + "\n" + (remainder || '')
+              return
+            end
+          end
+
+          @json_buffer = remainder || ''
+        end
       end
 
       def trigger_error(error)
