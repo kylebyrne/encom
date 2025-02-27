@@ -1,0 +1,239 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "bundler/setup"
+require "json"
+require "optparse"
+
+# Parse command-line options
+options = {
+  protocol_version: "2024-11-05",
+  capabilities: {
+    roots: {
+      listChanged: true
+    },
+    sampling: {}
+  },
+  server_info: {
+    name: "MockMCPServer",
+    version: "1.0.0"
+  },
+  debug: false
+}
+
+OptionParser.new do |opts|
+  opts.banner = "Usage: mock_mcp_server [options]"
+
+  opts.on("--protocol-version VERSION", "Protocol version to respond with") do |v|
+    options[:protocol_version] = v
+  end
+
+  opts.on("--server-name NAME", "Server name") do |v|
+    options[:server_info][:name] = v
+  end
+
+  opts.on("--server-version VERSION", "Server version") do |v|
+    options[:server_info][:version] = v
+  end
+
+  opts.on("--capabilities JSON", "Server capabilities (JSON string)") do |v|
+    options[:capabilities] = JSON.parse(v, symbolize_names: true)
+  end
+
+  opts.on("--debug", "Enable debug logging") do
+    options[:debug] = true
+  end
+
+  opts.on("-h", "--help", "Prints this help") do
+    puts opts
+    exit
+  end
+end.parse!
+
+class MockMCPServer
+  def initialize(options)
+    @protocol_version = options[:protocol_version]
+    @capabilities = options[:capabilities]
+    @server_info = options[:server_info]
+    @debug = options[:debug] || false
+    @message_id = 0
+    
+    # Mock resources for testing
+    @resources = [
+      {
+        uri: "example://resource1",
+        name: "Example Resource 1",
+        type: "file"
+      },
+      {
+        uri: "example://resource2",
+        name: "Example Resource 2",
+        type: "folder"
+      }
+    ]
+    
+    # Enable line buffering for stdout
+    $stdout.sync = true
+  end
+
+  def start
+    debug "Starting Mock MCP Server (#{@server_info[:name]} #{@server_info[:version]})"
+    debug "Protocol version: #{@protocol_version}"
+    debug "Capabilities: #{@capabilities.inspect}"
+    debug "Listening on stdin, writing to stdout..."
+    debug "---"
+
+    # Read and process messages from stdin
+    while (line = $stdin.gets)
+      begin
+        message = JSON.parse(line, symbolize_names: true)
+        debug "Received: #{message.inspect}"
+        process_message(message)
+      rescue JSON::ParserError => e
+        debug "Error parsing message: #{e.message}"
+        next
+      end
+    end
+  end
+
+  def process_message(message)
+    if message[:method] == "initialize" && message[:id]
+      handle_initialize(message)
+    elsif message[:method] == "initialized"
+      handle_initialized(message)
+    elsif message[:method] == "resources/list" && message[:id]
+      handle_resources_list(message)
+    elsif message[:method] == "roots/list" && message[:id]
+      handle_roots_list(message)
+    elsif message[:method] == "sampling/prepare" && message[:id]
+      handle_sampling_prepare(message)
+    elsif message[:method] == "sampling/sample" && message[:id]
+      handle_sampling_sample(message)
+    elsif message[:id]
+      # Handle unknown request methods
+      debug "Unknown request method: #{message[:method]}"
+      respond_error(message[:id], -32601, "Method not implemented: #{message[:method]}")
+    end
+  end
+
+  def handle_initialize(message)
+    client_protocol_version = message[:params][:protocolVersion]
+    client_capabilities = message[:params][:capabilities]
+    client_info = message[:params][:clientInfo]
+
+    debug "Client connected: #{client_info[:name]} #{client_info[:version]}"
+    debug "Client protocol version: #{client_protocol_version}"
+    debug "Client capabilities: #{client_capabilities.inspect}"
+
+    # Send initialize response
+    response = {
+      jsonrpc: "2.0",
+      id: message[:id],
+      result: {
+        protocolVersion: @protocol_version,
+        capabilities: @capabilities,
+        serverInfo: @server_info
+      }
+    }
+
+    send_message(response)
+  end
+
+  def handle_initialized(message)
+    debug "Client sent initialized notification"
+    # We don't need to send a response for notifications
+  end
+  
+  def handle_resources_list(message)
+    debug "Handling resources/list request"
+    response = {
+      jsonrpc: "2.0",
+      id: message[:id],
+      result: {
+        resources: @resources
+      }
+    }
+    send_message(response)
+  end
+  
+  def handle_roots_list(message)
+    debug "Handling roots/list request"
+    response = {
+      jsonrpc: "2.0",
+      id: message[:id],
+      result: {
+        roots: [
+          {
+            uri: "example://root1",
+            name: "Example Root 1"
+          },
+          {
+            uri: "example://root2",
+            name: "Example Root 2"
+          }
+        ]
+      }
+    }
+    send_message(response)
+  end
+  
+  def handle_sampling_prepare(message)
+    debug "Handling sampling/prepare request"
+    response = {
+      jsonrpc: "2.0",
+      id: message[:id],
+      result: {
+        prepared: true,
+        samplingId: "test-sampling-id-123"
+      }
+    }
+    send_message(response)
+  end
+  
+  def handle_sampling_sample(message)
+    sampling_id = message[:params][:samplingId]
+    prompt = message[:params][:prompt] || ""
+    
+    response = {
+      jsonrpc: "2.0",
+      id: message[:id],
+      result: {
+        completion: "This is a mock response for: #{prompt}",
+        completionId: "test-completion-id-456"
+      }
+    }
+    send_message(response)
+  end
+
+  def respond_error(id, code, message, data = nil)
+    response = {
+      jsonrpc: "2.0",
+      id: id,
+      error: {
+        code: code,
+        message: message
+      }
+    }
+    response[:error][:data] = data if data
+
+    send_message(response)
+  end
+
+  def send_message(message)
+    @message_id += 1 if message[:id].nil?
+    message[:id] = @message_id if message[:id].nil?
+    
+    json = JSON.generate(message)
+    debug "Sending: #{message.inspect}"
+    puts json  # Write to stdout
+    $stdout.flush
+  end
+  
+  def debug(message)
+    $stderr.puts "[MockMCPServer] #{message}" if @debug
+  end
+end
+
+# Start the server
+server = MockMCPServer.new(options)
+server.start

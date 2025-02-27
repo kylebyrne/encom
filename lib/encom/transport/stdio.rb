@@ -73,6 +73,9 @@ module Encom
       def send(data)
         return false unless @process && @stdin
 
+        # Add a newline if not already present to ensure proper message framing over stdio
+        data = "#{data}\n" unless data.end_with?("\n")
+
         begin
           @stdin.write(data)
           @stdin.flush
