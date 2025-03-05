@@ -4,6 +4,7 @@
 require "bundler/setup"
 require "json"
 require "optparse"
+require "encom/server"
 
 # Parse command-line options
 options = {
@@ -51,6 +52,50 @@ OptionParser.new do |opts|
   end
 end.parse!
 
+# Define our server class that inherits from Encom::Server
+class MCPServer < Encom::Server
+  name "MockMCPServer"
+  version "1.0.0"
+
+  # Define the calculate_sum tool
+  tool :calculate_sum, 'Add two numbers together', {
+    a: {
+      type: Integer,
+      description: 'The first number'
+    },
+    b: {
+      type: Integer,
+      description: 'The second number'
+    }
+  }, ->(a:, b:) { 
+    {
+      content: [
+        {
+          type: "text",
+          text: "The sum of #{a} and #{b} is #{a + b}"
+        }
+      ]
+    }
+  }
+
+  # Define the echo tool
+  tool :echo, 'Echo back the input message', {
+    message: {
+      type: String,
+      description: 'The message to echo back'
+    }
+  }, ->(message:) {
+    {
+      content: [
+        {
+          type: "text",
+          text: "Echo: #{message}"
+        }
+      ]
+    }
+  }
+end
+
 class MockMCPServer
   def initialize(options)
     @protocol_version = options[:protocol_version]
@@ -58,6 +103,9 @@ class MockMCPServer
     @server_info = options[:server_info]
     @debug = options[:debug] || false
     @message_id = 0
+    
+    # Create an instance of our server
+    @server = MCPServer.new
     
     # Mock resources for testing
     @resources = [
@@ -70,33 +118,6 @@ class MockMCPServer
         uri: "example://resource2",
         name: "Example Resource 2",
         type: "folder"
-      }
-    ]
-    
-    # Mock tools for testing
-    @tools = [
-      {
-        name: "calculate_sum",
-        description: "Add two numbers together",
-        inputSchema: {
-          type: "object",
-          properties: {
-            a: { type: "number" },
-            b: { type: "number" }
-          },
-          required: ["a", "b"]
-        }
-      },
-      {
-        name: "echo",
-        description: "Echo back the input message",
-        inputSchema: {
-          type: "object",
-          properties: {
-            message: { type: "string" }
-          },
-          required: ["message"]
-        }
       }
     ]
     
@@ -239,11 +260,15 @@ class MockMCPServer
   
   def handle_tools_list(message)
     debug "Handling tools/list request"
+    
+    # Get tools from the server implementation
+    tools = @server.tools.map(&:definition)
+    
     response = {
       jsonrpc: "2.0",
       id: message[:id],
       result: {
-        tools: @tools
+        tools: tools
       }
     }
     send_message(response)
@@ -255,63 +280,28 @@ class MockMCPServer
     tool_name = message[:params][:name]
     arguments = message[:params][:arguments] || {}
     
-    tool = @tools.find { |t| t[:name] == tool_name }
+    # Find the tool to verify it exists
+    tool = @server.tools.find { |t| t.name.to_s == tool_name }
     
     if tool.nil?
       respond_error(message[:id], -32602, "Unknown tool: #{tool_name}")
       return
     end
     
-    case tool_name
-    when "calculate_sum"
-      a = arguments[:a] || 0
-      b = arguments[:b] || 0
-      result = a + b
+    begin
+      # Call the tool through our server instance
+      result = @server.call_tool(tool_name, arguments)
       
       response = {
         jsonrpc: "2.0",
         id: message[:id],
-        result: {
-          content: [
-            {
-              type: "text",
-              text: "The sum of #{a} and #{b} is #{result}"
-            }
-          ]
-        }
+        result: result
       }
-    when "echo"
-      message_text = arguments[:message] || ""
       
-      response = {
-        jsonrpc: "2.0",
-        id: message[:id],
-        result: {
-          content: [
-            {
-              type: "text",
-              text: "Echo: #{message_text}"
-            }
-          ]
-        }
-      }
-    else
-      # Default response for other tools
-      response = {
-        jsonrpc: "2.0",
-        id: message[:id],
-        result: {
-          content: [
-            {
-              type: "text",
-              text: "Tool executed: #{tool_name} with arguments: #{arguments.inspect}"
-            }
-          ]
-        }
-      }
+      send_message(response)
+    rescue StandardError => e
+      respond_error(message[:id], -32000, "Tool execution error: #{e.message}")
     end
-    
-    send_message(response)
   end
 
   def respond_error(id, code, message, data = nil)

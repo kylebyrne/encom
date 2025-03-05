@@ -126,8 +126,8 @@ RSpec.describe Encom do
             inputSchema: {
               type: 'object',
               properties: {
-                a: { type: 'number' },
-                b: { type: 'number' }
+                a: { type: 'number', description: 'The first number' },
+                b: { type: 'number', description: 'The second number' }
               },
               required: %w[a b]
             }
@@ -138,7 +138,7 @@ RSpec.describe Encom do
             inputSchema: {
               type: 'object',
               properties: {
-                message: { type: 'string' }
+                message: { type: 'string', description: 'The message to echo back' }
               },
               required: ['message']
             }
