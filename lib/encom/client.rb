@@ -1,5 +1,7 @@
-require "json"
-require "encom/error_codes"
+# frozen_string_literal: true
+
+require 'json'
+require 'encom/error_codes'
 module Encom
   class Client
     LATEST_PROTOCOL_VERSION = '2024-11-05'
@@ -29,7 +31,7 @@ module Encom
       @initialized = false
       @closing = false
       @error_handlers = []
-      @first_error_reported = false  # Flag to track if we've already reported an error
+      @first_error_reported = false # Flag to track if we've already reported an error
     end
 
     # Register a callback for error handling
@@ -77,9 +79,9 @@ module Encom
       @responses << parsed_response
 
       # Check for protocol errors immediately, even without an ID
-      if parsed_response[:error] && 
-         parsed_response[:error][:code] == Encom::ErrorCodes::PROTOCOL_ERROR && 
-         parsed_response[:error][:message].include?("Unsupported protocol version")
+      if parsed_response[:error] &&
+         parsed_response[:error][:code] == Encom::ErrorCodes::PROTOCOL_ERROR &&
+         parsed_response[:error][:message].include?('Unsupported protocol version')
         # Only trigger a protocol error if we haven't already closed the connection
         unless @closing
           error = ProtocolVersionError.new(parsed_response[:error][:message])
@@ -135,7 +137,7 @@ module Encom
       return if @closing
 
       # Check if this is an error response to an initialize request
-      if @pending_requests[response[:id]] == 'initialize' && 
+      if @pending_requests[response[:id]] == 'initialize' &&
          response[:error][:code] == Encom::ErrorCodes::PROTOCOL_ERROR
         error = ProtocolVersionError.new("Unsupported protocol version: #{response[:error][:message]}")
         close
@@ -150,6 +152,7 @@ module Encom
     def trigger_error(error)
       # Only report the first error
       return if @first_error_reported
+
       @first_error_reported = true
 
       if @error_handlers.empty?

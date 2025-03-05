@@ -1,3 +1,6 @@
+# frozen_string_literal: true
+
+require 'English'
 require 'open3'
 require 'timeout'
 require 'json'
@@ -141,21 +144,19 @@ module Encom
 
       def start_stdout_thread
         Thread.new do
-          while true
-            begin
-              chunk = @stdout.read_nonblock(1024)
-              if chunk && !chunk.empty?
-                @mutex.synchronize do
-                  @read_buffer << chunk
-                end
-                process_read_buffer
+          loop do
+            chunk = @stdout.read_nonblock(1024)
+            if chunk && !chunk.empty?
+              @mutex.synchronize do
+                @read_buffer << chunk
               end
-            rescue IO::WaitReadable
-              IO.select([@stdout], nil, nil, 0.1)
-              retry
-            rescue EOFError
-              break
+              process_read_buffer
             end
+          rescue IO::WaitReadable
+            IO.select([@stdout], nil, nil, 0.1)
+            retry
+          rescue EOFError
+            break
           end
         rescue IOError, Errno::EPIPE => e
           trigger_error(e) unless @process.nil?
@@ -166,7 +167,7 @@ module Encom
 
       def start_stderr_thread
         Thread.new do
-          while line = @stderr.gets
+          while (line = @stderr.gets)
             trigger_error(RuntimeError.new("Process stderr: #{line.strip}"))
           end
         rescue IOError, Errno::EPIPE => e
@@ -177,7 +178,7 @@ module Encom
       def start_process_monitor_thread
         Thread.new do
           Process.wait(@process.pid)
-          exit_status = $?.exitstatus
+          exit_status = $CHILD_STATUS.exitstatus
           trigger_close(exit_status)
         rescue Errno::ECHILD, Errno::ESRCH
           trigger_close
@@ -209,7 +210,7 @@ module Encom
 
               trigger_data(message)
             rescue JSON::ParserError
-              @json_buffer = message + "\n" + (remainder || '')
+              @json_buffer = "#{message}\n#{remainder || ''}"
               return
             end
           end

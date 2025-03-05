@@ -1,16 +1,16 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-require "bundler/setup"
-require "json"
-require "optparse"
-require "encom/error_codes"
-require "encom/server"
-require "encom/server_transport/stdio"
+require 'bundler/setup'
+require 'json'
+require 'optparse'
+require 'encom/error_codes'
+require 'encom/server'
+require 'encom/server_transport/stdio'
 
 # Parse command-line options
 options = {
-  protocol_version: "2024-11-05",
+  protocol_version: '2024-11-05',
   capabilities: {
     roots: {
       listChanged: true
@@ -22,29 +22,29 @@ options = {
 }
 
 OptionParser.new do |opts|
-  opts.banner = "Usage: mock_mcp_server [options]"
+  opts.banner = 'Usage: mock_mcp_server [options]'
 
-  opts.on("--protocol-version VERSION", "Protocol version to respond with") do |v|
+  opts.on('--protocol-version VERSION', 'Protocol version to respond with') do |v|
     options[:protocol_version] = v
   end
 
-  opts.on("--server-name NAME", "Server name") do |v|
+  opts.on('--server-name NAME', 'Server name') do |v|
     options[:server_name] = v
   end
 
-  opts.on("--server-version VERSION", "Server version") do |v|
+  opts.on('--server-version VERSION', 'Server version') do |v|
     options[:server_version] = v
   end
 
-  opts.on("--capabilities JSON", "Server capabilities (JSON string)") do |v|
+  opts.on('--capabilities JSON', 'Server capabilities (JSON string)') do |v|
     options[:capabilities] = JSON.parse(v, symbolize_names: true)
   end
 
-  opts.on("--debug", "Enable debug logging") do
+  opts.on('--debug', 'Enable debug logging') do
     options[:debug] = true
   end
 
-  opts.on("-h", "--help", "Prints this help") do
+  opts.on('-h', '--help', 'Prints this help') do
     puts opts
     exit
   end
@@ -52,8 +52,8 @@ end.parse!
 
 # Define our server class that inherits from Encom::Server
 class MCPServer < Encom::Server
-  name "MockMCPServer"
-  version "1.0.0"
+  name 'MockMCPServer'
+  version '1.0.0'
 
   # Define the calculate_sum tool
   tool :calculate_sum, 'Add two numbers together', {
@@ -65,11 +65,11 @@ class MCPServer < Encom::Server
       type: Integer,
       description: 'The second number'
     }
-  }, ->(a:, b:) { 
+  }, lambda { |a:, b:|
     {
       content: [
         {
-          type: "text",
+          type: 'text',
           text: "The sum of #{a} and #{b} is #{a + b}"
         }
       ]
@@ -82,67 +82,67 @@ class MCPServer < Encom::Server
       type: String,
       description: 'The message to echo back'
     }
-  }, ->(message:) {
+  }, lambda { |message:|
     {
       content: [
         {
-          type: "text",
+          type: 'text',
           text: "Echo: #{message}"
         }
       ]
     }
   }
-  
+
   # Override resource handling methods if needed
   def handle_resources_list(message)
     resources = [
       {
-        uri: "example://resource1",
-        name: "Example Resource 1",
-        type: "file"
+        uri: 'example://resource1',
+        name: 'Example Resource 1',
+        type: 'file'
       },
       {
-        uri: "example://resource2",
-        name: "Example Resource 2",
-        type: "folder"
+        uri: 'example://resource2',
+        name: 'Example Resource 2',
+        type: 'folder'
       }
     ]
-    
+
     respond(message[:id], {
-      resources: resources
-    })
+              resources: resources
+            })
   end
-  
+
   def handle_roots_list(message)
     respond(message[:id], {
-      roots: [
-        {
-          uri: "example://root1",
-          name: "Example Root 1"
-        },
-        {
-          uri: "example://root2",
-          name: "Example Root 2"
-        }
-      ]
-    })
+              roots: [
+                {
+                  uri: 'example://root1',
+                  name: 'Example Root 1'
+                },
+                {
+                  uri: 'example://root2',
+                  name: 'Example Root 2'
+                }
+              ]
+            })
   end
-  
+
   def handle_sampling_prepare(message)
     respond(message[:id], {
-      prepared: true,
-      samplingId: "test-sampling-id-123"
-    })
+              prepared: true,
+              samplingId: 'test-sampling-id-123'
+            })
   end
-  
+
   def handle_sampling_sample(message)
-    sampling_id = message[:params][:samplingId]
-    prompt = message[:params][:prompt] || ""
-    
+    message[:params][:samplingId]
+    prompt = message[:params][:prompt] || ''
+
     respond(message[:id], {
-      completion: "This is a mock response for: #{prompt}",
-      completionId: "test-completion-id-456"
-    })
+              completion: "This is a mock response for: #{prompt}",
+              completionId: 'test-completion-id-456'
+            })
   end
 end
 
@@ -166,22 +166,18 @@ begin
   # Run the server with stdio transport
   server.run(Encom::ServerTransport::Stdio, debug: options[:debug])
 rescue ArgumentError => e
-  if e.message.include?("Unsupported protocol version")
-    # Print error in JSON-RPC format for the client to parse
-    error_response = {
-      jsonrpc: "2.0",
-      error: {
-        code: Encom::ErrorCodes::PROTOCOL_ERROR,
-        message: e.message
-      },
-      id: nil
-    }
-    puts JSON.generate(error_response)
-    if options[:debug]
-      $stderr.puts "ERROR: #{e.message}"
-    end
-    exit(1)
-  else
-    raise
-  end
+  raise unless e.message.include?('Unsupported protocol version')
+
+  # Print error in JSON-RPC format for the client to parse
+  error_response = {
+    jsonrpc: '2.0',
+    error: {
+      code: Encom::ErrorCodes::PROTOCOL_ERROR,
+      message: e.message
+    },
+    id: nil
+  }
+  puts JSON.generate(error_response)
+  warn "ERROR: #{e.message}" if options[:debug]
+  exit(1)
 end

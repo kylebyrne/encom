@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Encom
   module ServerTransport
     class Base
@@ -11,17 +13,17 @@ module Encom
 
       # Start the transport - must be implemented by subclasses
       def start
-        raise NotImplementedError, "Subclasses must implement #start"
+        raise NotImplementedError, 'Subclasses must implement #start'
       end
 
       # Stop the transport - must be implemented by subclasses
       def stop
-        raise NotImplementedError, "Subclasses must implement #stop"
+        raise NotImplementedError, 'Subclasses must implement #stop'
       end
 
       # Send a message through the transport - must be implemented by subclasses
       def send_message(message)
-        raise NotImplementedError, "Subclasses must implement #send_message"
+        raise NotImplementedError, 'Subclasses must implement #send_message'
       end
 
       # Process an incoming message - default implementation delegates to server
@@ -32,8 +34,9 @@ module Encom
       # Log debug information if debug is enabled
       def debug(message)
         return unless @debug
-        $stderr.puts "[Encom::ServerTransport] #{message}"
+
+        warn "[Encom::ServerTransport] #{message}"
       end
     end
   end
-end 
+end

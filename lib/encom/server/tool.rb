@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Encom
   class Server
     class Tool
@@ -34,7 +36,7 @@ module Encom
           isError: true,
           content: [
             {
-              type: "text",
+              type: 'text',
               text: "Error: #{e.message}"
             }
           ]

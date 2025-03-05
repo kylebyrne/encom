@@ -71,7 +71,7 @@ def list_tools(client)
 end
 
 # Demo the filesystem tools
-def demo_filesystem_tools(client, tools)
+def demo_filesystem_tools(client, _tools)
   # Get the list of allowed directories
   puts 'Getting allowed directories...'
   result = client.call_tool(
@@ -162,7 +162,7 @@ end
 
 # Helper to extract text content from a tool response
 def extract_text_content(result)
-  if result && result[:content] && result[:content].first
+  if result && result[:content]&.first
     content_item = result[:content].first
     if content_item[:type] == 'text'
       content_item[:text]
@@ -189,4 +189,3 @@ end
 
 # Run the demo
 main if $PROGRAM_NAME == __FILE__
-
