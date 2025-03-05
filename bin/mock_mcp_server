@@ -5,6 +5,7 @@ require "bundler/setup"
 require "json"
 require "optparse"
 require "encom/server"
+require "encom/server_transport/stdio"
 
 # Parse command-line options
 options = {
@@ -15,10 +16,6 @@ options = {
     },
     sampling: {},
     tools: {}
-  },
-  server_info: {
-    name: "MockMCPServer",
-    version: "1.0.0"
   },
   debug: false
 }
@@ -31,11 +28,11 @@ OptionParser.new do |opts|
   end
 
   opts.on("--server-name NAME", "Server name") do |v|
-    options[:server_info][:name] = v
+    options[:server_name] = v
   end
 
   opts.on("--server-version VERSION", "Server version") do |v|
-    options[:server_info][:version] = v
+    options[:server_version] = v
   end
 
   opts.on("--capabilities JSON", "Server capabilities (JSON string)") do |v|
@@ -94,21 +91,10 @@ class MCPServer < Encom::Server
       ]
     }
   }
-end
-
-class MockMCPServer
-  def initialize(options)
-    @protocol_version = options[:protocol_version]
-    @capabilities = options[:capabilities]
-    @server_info = options[:server_info]
-    @debug = options[:debug] || false
-    @message_id = 0
-    
-    # Create an instance of our server
-    @server = MCPServer.new
-    
-    # Mock resources for testing
-    @resources = [
+  
+  # Override resource handling methods if needed
+  def handle_resources_list(message)
+    resources = [
       {
         uri: "example://resource1",
         name: "Example Resource 1",
@@ -121,218 +107,80 @@ class MockMCPServer
       }
     ]
     
-    # Enable line buffering for stdout
-    $stdout.sync = true
-  end
-
-  def start
-    debug "Starting Mock MCP Server (#{@server_info[:name]} #{@server_info[:version]})"
-    debug "Protocol version: #{@protocol_version}"
-    debug "Capabilities: #{@capabilities.inspect}"
-    debug "Listening on stdin, writing to stdout..."
-    debug "---"
-
-    # Read and process messages from stdin
-    while (line = $stdin.gets)
-      begin
-        message = JSON.parse(line, symbolize_names: true)
-        debug "Received: #{message.inspect}"
-        process_message(message)
-      rescue JSON::ParserError => e
-        debug "Error parsing message: #{e.message}"
-        next
-      end
-    end
-  end
-
-  def process_message(message)
-    if message[:method] == "initialize" && message[:id]
-      handle_initialize(message)
-    elsif message[:method] == "initialized"
-      handle_initialized(message)
-    elsif message[:method] == "resources/list" && message[:id]
-      handle_resources_list(message)
-    elsif message[:method] == "roots/list" && message[:id]
-      handle_roots_list(message)
-    elsif message[:method] == "sampling/prepare" && message[:id]
-      handle_sampling_prepare(message)
-    elsif message[:method] == "sampling/sample" && message[:id]
-      handle_sampling_sample(message)
-    elsif message[:method] == "tools/list" && message[:id]
-      handle_tools_list(message)
-    elsif message[:method] == "tools/call" && message[:id]
-      handle_tools_call(message)
-    elsif message[:id]
-      # Handle unknown request methods
-      debug "Unknown request method: #{message[:method]}"
-      respond_error(message[:id], -32601, "Method not implemented: #{message[:method]}")
-    end
-  end
-
-  def handle_initialize(message)
-    client_protocol_version = message[:params][:protocolVersion]
-    client_capabilities = message[:params][:capabilities]
-    client_info = message[:params][:clientInfo]
-
-    debug "Client connected: #{client_info[:name]} #{client_info[:version]}"
-    debug "Client protocol version: #{client_protocol_version}"
-    debug "Client capabilities: #{client_capabilities.inspect}"
-
-    # Send initialize response
-    response = {
-      jsonrpc: "2.0",
-      id: message[:id],
-      result: {
-        protocolVersion: @protocol_version,
-        capabilities: @capabilities,
-        serverInfo: @server_info
-      }
-    }
-
-    send_message(response)
-  end
-
-  def handle_initialized(message)
-    debug "Client sent initialized notification"
-    # We don't need to send a response for notifications
-  end
-  
-  def handle_resources_list(message)
-    debug "Handling resources/list request"
-    response = {
-      jsonrpc: "2.0",
-      id: message[:id],
-      result: {
-        resources: @resources
-      }
-    }
-    send_message(response)
+    respond(message[:id], {
+      resources: resources
+    })
   end
   
   def handle_roots_list(message)
-    debug "Handling roots/list request"
-    response = {
-      jsonrpc: "2.0",
-      id: message[:id],
-      result: {
-        roots: [
-          {
-            uri: "example://root1",
-            name: "Example Root 1"
-          },
-          {
-            uri: "example://root2",
-            name: "Example Root 2"
-          }
-        ]
-      }
-    }
-    send_message(response)
+    respond(message[:id], {
+      roots: [
+        {
+          uri: "example://root1",
+          name: "Example Root 1"
+        },
+        {
+          uri: "example://root2",
+          name: "Example Root 2"
+        }
+      ]
+    })
   end
   
   def handle_sampling_prepare(message)
-    debug "Handling sampling/prepare request"
-    response = {
-      jsonrpc: "2.0",
-      id: message[:id],
-      result: {
-        prepared: true,
-        samplingId: "test-sampling-id-123"
-      }
-    }
-    send_message(response)
+    respond(message[:id], {
+      prepared: true,
+      samplingId: "test-sampling-id-123"
+    })
   end
   
   def handle_sampling_sample(message)
     sampling_id = message[:params][:samplingId]
     prompt = message[:params][:prompt] || ""
     
-    response = {
-      jsonrpc: "2.0",
-      id: message[:id],
-      result: {
-        completion: "This is a mock response for: #{prompt}",
-        completionId: "test-completion-id-456"
-      }
-    }
-    send_message(response)
-  end
-  
-  def handle_tools_list(message)
-    debug "Handling tools/list request"
-    
-    # Get tools from the server implementation
-    tools = @server.tools.map(&:definition)
-    
-    response = {
-      jsonrpc: "2.0",
-      id: message[:id],
-      result: {
-        tools: tools
-      }
-    }
-    send_message(response)
-  end
-  
-  def handle_tools_call(message)
-    debug "Handling tools/call request"
-    
-    tool_name = message[:params][:name]
-    arguments = message[:params][:arguments] || {}
-    
-    # Find the tool to verify it exists
-    tool = @server.tools.find { |t| t.name.to_s == tool_name }
-    
-    if tool.nil?
-      respond_error(message[:id], -32602, "Unknown tool: #{tool_name}")
-      return
-    end
-    
-    begin
-      # Call the tool through our server instance
-      result = @server.call_tool(tool_name, arguments)
-      
-      response = {
-        jsonrpc: "2.0",
-        id: message[:id],
-        result: result
-      }
-      
-      send_message(response)
-    rescue StandardError => e
-      respond_error(message[:id], -32000, "Tool execution error: #{e.message}")
-    end
-  end
-
-  def respond_error(id, code, message, data = nil)
-    response = {
-      jsonrpc: "2.0",
-      id: id,
-      error: {
-        code: code,
-        message: message
-      }
-    }
-    response[:error][:data] = data if data
-
-    send_message(response)
-  end
-
-  def send_message(message)
-    @message_id += 1 if message[:id].nil?
-    message[:id] = @message_id if message[:id].nil?
-    
-    json = JSON.generate(message)
-    debug "Sending: #{message.inspect}"
-    puts json  # Write to stdout
-    $stdout.flush
-  end
-  
-  def debug(message)
-    $stderr.puts "[MockMCPServer] #{message}" if @debug
+    respond(message[:id], {
+      completion: "This is a mock response for: #{prompt}",
+      completionId: "test-completion-id-456"
+    })
   end
 end
 
-# Start the server
-server = MockMCPServer.new(options)
-server.start
+# Set server name/version if provided in options
+MCPServer.name(options[:server_name]) if options[:server_name]
+MCPServer.version(options[:server_version]) if options[:server_version]
+
+# Create and run the server
+begin
+  server = MCPServer.new(
+    protocol_version: options[:protocol_version],
+    capabilities: options[:capabilities]
+  )
+
+  # Debug output for protocol version
+  if options[:debug]
+    puts "DEBUG: Server starting with protocol version: #{options[:protocol_version]}"
+    puts "DEBUG: Server supported versions: #{Encom::Server::SUPPORTED_PROTOCOL_VERSIONS.inspect}"
+  end
+
+  # Run the server with stdio transport
+  server.run(Encom::ServerTransport::Stdio, debug: options[:debug])
+rescue ArgumentError => e
+  if e.message.include?("Unsupported protocol version")
+    # Print error in JSON-RPC format for the client to parse
+    error_response = {
+      jsonrpc: "2.0",
+      error: {
+        code: Encom::Server::ErrorCodes::PROTOCOL_ERROR,
+        message: e.message
+      },
+      id: nil
+    }
+    puts JSON.generate(error_response)
+    if options[:debug]
+      $stderr.puts "ERROR: #{e.message}"
+    end
+    exit(1)
+  else
+    raise
+  end
+end

@@ -29,7 +29,16 @@ module Encom
           @proc.call(*arguments)
         end
       rescue StandardError => e
-        CallError.new(e.message)
+        # Return error in MCP-compliant format as per docs
+        {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Error: #{e.message}"
+            }
+          ]
+        }
       end
 
       private

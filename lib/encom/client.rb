@@ -59,8 +59,9 @@ module Encom
           }
         }
       )
-
-      self # Return self for method chaining
+    rescue JSON::ParserError => e
+      # This might be a protocol version error or other startup error
+      trigger_error(ConnectionError.new("Error parsing initial response: #{e.message}"))
     end
 
     def handle_transport_error(error)
@@ -72,6 +73,16 @@ module Encom
       parsed_response = JSON.parse(data, symbolize_names: true)
 
       @responses << parsed_response
+
+      # Check for protocol errors immediately, even without an ID
+      if parsed_response[:error] && 
+         parsed_response[:error][:code] == -32001 && # PROTOCOL_ERROR 
+         parsed_response[:error][:message].include?("Unsupported protocol version")
+        error = ProtocolVersionError.new(parsed_response[:error][:message])
+        close
+        trigger_error(error)
+        return
+      end
 
       if parsed_response[:id]
         @response_mutex.synchronize do
@@ -115,7 +126,19 @@ module Encom
     end
 
     def handle_error(response)
+      # Check if this is an error response to an initialize request
+      if @pending_requests[response[:id]] == 'initialize' && 
+         response[:error][:code] == -32001 # PROTOCOL_ERROR
+        puts "DEBUG: Protocol error received in initialize response: #{response[:error].inspect}"
+        error = ProtocolVersionError.new("Unsupported protocol version: #{response[:error][:message]}")
+        puts "DEBUG: Creating ProtocolVersionError: #{error.inspect}"
+        close
+        trigger_error(error)
+        return
+      end
+
       error_msg = "Error from server: #{response[:error][:message]} (#{response[:error][:code]})"
+      puts "DEBUG: General error received: #{error_msg}"
       trigger_error(ConnectionError.new(error_msg))
     end
 
