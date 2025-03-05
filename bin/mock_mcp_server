@@ -4,6 +4,7 @@
 require "bundler/setup"
 require "json"
 require "optparse"
+require "encom/error_codes"
 require "encom/server"
 require "encom/server_transport/stdio"
 
@@ -170,7 +171,7 @@ rescue ArgumentError => e
     error_response = {
       jsonrpc: "2.0",
       error: {
-        code: Encom::Server::ErrorCodes::PROTOCOL_ERROR,
+        code: Encom::ErrorCodes::PROTOCOL_ERROR,
         message: e.message
       },
       id: nil

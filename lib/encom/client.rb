@@ -1,4 +1,5 @@
 require "json"
+require "encom/error_codes"
 module Encom
   class Client
     LATEST_PROTOCOL_VERSION = '2024-11-05'
@@ -28,6 +29,7 @@ module Encom
       @initialized = false
       @closing = false
       @error_handlers = []
+      @first_error_reported = false  # Flag to track if we've already reported an error
     end
 
     # Register a callback for error handling
@@ -76,11 +78,14 @@ module Encom
 
       # Check for protocol errors immediately, even without an ID
       if parsed_response[:error] && 
-         parsed_response[:error][:code] == -32001 && # PROTOCOL_ERROR 
+         parsed_response[:error][:code] == Encom::ErrorCodes::PROTOCOL_ERROR && 
          parsed_response[:error][:message].include?("Unsupported protocol version")
-        error = ProtocolVersionError.new(parsed_response[:error][:message])
-        close
-        trigger_error(error)
+        # Only trigger a protocol error if we haven't already closed the connection
+        unless @closing
+          error = ProtocolVersionError.new(parsed_response[:error][:message])
+          close
+          trigger_error(error)
+        end
         return
       end
 
@@ -126,23 +131,27 @@ module Encom
     end
 
     def handle_error(response)
+      # Don't process errors if we're already closing
+      return if @closing
+
       # Check if this is an error response to an initialize request
       if @pending_requests[response[:id]] == 'initialize' && 
-         response[:error][:code] == -32001 # PROTOCOL_ERROR
-        puts "DEBUG: Protocol error received in initialize response: #{response[:error].inspect}"
+         response[:error][:code] == Encom::ErrorCodes::PROTOCOL_ERROR
         error = ProtocolVersionError.new("Unsupported protocol version: #{response[:error][:message]}")
-        puts "DEBUG: Creating ProtocolVersionError: #{error.inspect}"
         close
         trigger_error(error)
         return
       end
 
       error_msg = "Error from server: #{response[:error][:message]} (#{response[:error][:code]})"
-      puts "DEBUG: General error received: #{error_msg}"
       trigger_error(ConnectionError.new(error_msg))
     end
 
     def trigger_error(error)
+      # Only report the first error
+      return if @first_error_reported
+      @first_error_reported = true
+
       if @error_handlers.empty?
         # TODO: I'd love to re-raise this to the user but this ends up run
         # in a background thread right now due to how we've implement the stdio transport

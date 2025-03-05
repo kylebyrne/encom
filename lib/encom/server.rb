@@ -28,19 +28,6 @@ module Encom
 
     attr_reader :transport, :capabilities
 
-    # Define standard JSON-RPC error codes
-    module ErrorCodes
-      PARSE_ERROR = -32700
-      INVALID_REQUEST = -32600
-      METHOD_NOT_FOUND = -32601
-      INVALID_PARAMS = -32602
-      INTERNAL_ERROR = -32603
-      
-      # MCP specific error codes
-      TOOL_EXECUTION_ERROR = -32000
-      PROTOCOL_ERROR = -32001
-    end
-
     def initialize(options = {})
       @message_id = 0
       @capabilities = options[:capabilities] || {
@@ -100,7 +87,7 @@ module Encom
       # Check for jsonrpc version
       unless message[:jsonrpc] == '2.0'
         if message[:id]
-          respond_error(message[:id], ErrorCodes::INVALID_REQUEST, 'Invalid JSON-RPC request')
+          respond_error(message[:id], Encom::ErrorCodes::INVALID_REQUEST, 'Invalid JSON-RPC request')
         end
         return
       end
@@ -130,7 +117,7 @@ module Encom
           if @transport && @transport.respond_to?(:debug)
             @transport.debug "Unknown method: #{message[:method]}"
           end
-          respond_error(message[:id], ErrorCodes::METHOD_NOT_FOUND, "Method not found: #{message[:method]}")
+          respond_error(message[:id], Encom::ErrorCodes::METHOD_NOT_FOUND, "Method not found: #{message[:method]}")
         end
       end
     rescue StandardError => e
@@ -139,7 +126,7 @@ module Encom
       end
       
       if message && message[:id]
-        respond_error(message[:id], ErrorCodes::INTERNAL_ERROR, "Internal error: #{e.message}")
+        respond_error(message[:id], Encom::ErrorCodes::INTERNAL_ERROR, "Internal error: #{e.message}")
       end
     end
 
@@ -213,7 +200,7 @@ module Encom
         
         respond_error(
           message[:id],
-          ErrorCodes::PROTOCOL_ERROR,
+          Encom::ErrorCodes::PROTOCOL_ERROR,
           "Unsupported protocol version: #{client_protocol_version}",
           { supportedVersions: SUPPORTED_PROTOCOL_VERSIONS }
         )
@@ -277,7 +264,7 @@ module Encom
         result = call_tool(tool_name, arguments)
         respond(message[:id], result)
       rescue StandardError => e
-        respond_error(message[:id], ErrorCodes::TOOL_EXECUTION_ERROR, "Tool execution error: #{e.message}")
+        respond_error(message[:id], Encom::ErrorCodes::TOOL_EXECUTION_ERROR, "Tool execution error: #{e.message}")
       end
     end
 
