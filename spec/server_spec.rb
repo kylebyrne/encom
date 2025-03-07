@@ -48,7 +48,15 @@ RSpec.describe Encom do
   describe '#call_tool' do
     it 'calls the tool with the arguments specified' do
       result = server.call_tool(:add, [3, 4])
-      expect(result).to eq 7
+      # Expect standardized response format with content array
+      expect(result).to eq({
+        content: [
+          {
+            type: 'text',
+            text: '7'
+          }
+        ]
+      })
     end
   end
 end

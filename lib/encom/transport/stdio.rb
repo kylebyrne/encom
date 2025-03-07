@@ -14,10 +14,11 @@ module Encom
         command:,
         args: []
       )
+        super()
         @command = command
         @args = args
         @process = nil
-        @read_buffer = ''
+        @read_buffer = +''  # Use mutable string
         @callbacks = {
           error: [],
           close: [],
