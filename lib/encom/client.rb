@@ -124,9 +124,10 @@ module Encom
 
       @initialized = true
 
+      # Use the 'notifications/initialized' format for compatibility with Python MCP servers
       notification(
         {
-          method: 'initialized',
+          method: 'notifications/initialized',
           params: {}
         }
       )
